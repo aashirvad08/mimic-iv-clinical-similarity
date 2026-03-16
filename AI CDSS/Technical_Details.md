@@ -1,4 +1,4 @@
-**Gives personal details :**
+# Gives personal details :
 
 patients.csv.gz -> subject_id gender anchor_age anchor_year anchor_year_group
 
@@ -6,11 +6,11 @@ admissions.csv.gz -> subject_id hadm_id admittime dischtime admission_type admis
 
 omr.csv.gz -> subject_id chartdate seq_num result_name(height, weight, blood pressure, BMI) result_value
 
-**Gives idea about transfers (if eventtype = is first admit then ED then it's a serious case):**
+# Gives idea about transfers (if eventtype = is first admit then ED then it's a serious case):
 
 transfers.csv.gz -> subject_id hadm_id transfer_id eventtype intime outtime
 
-**Gives Diagnoses and procedures for that diagnoses :**
+# Gives Diagnoses and procedures for that diagnoses :
 
 diagnoses_icd.csv.gz -> subject_id hadm_id seq_num icd_code icd_version
 
@@ -20,17 +20,18 @@ procedures_icd.csv.gz -> subject_id hadm_id seq_num chartdate icd_code icd_versi
 
 d_icd_procedures.csv.gz -> icd_code icd_version long_title
 
-**Gives idea of how severe a dieasea actually is :**
+# Gives idea of how severe a dieasea actually is :
 
 labevents.csv.gz -> labevent_id subject_id hadm_id(most are <NA>) specimen_id itemid charttime storetime value valuenum valueuom ref_range_lower ref_range_upper flag priority comments
 
 d_labitems.csv.gz -> itemid label fluid category
 
-**Gives Prescription Ideas :**
+# Gives Prescription Ideas :
 
 prescriptions.csv.gz -> subject_id hadm_id poe_id poe_seq starttime stoptime drug_type drug formulary_drug_cd prod_strength form_rx dose_val_rx dose_unit_rx form_val_disp form_unit_disp doses_per_24_hrs route
 
-**Further Optimization Idea**
+# Further Optimization Idea
+
 We have Total admissions: 545,848
 but Admissions with OMR data: 181,425 (33.2%)
 
