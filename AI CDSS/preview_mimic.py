@@ -11,18 +11,14 @@ OUT_DIR = "previews"
 important_tables = [
     #"patients.csv.gz",
     #"admissions.csv.gz",
+    #"omr.csv.gz",
     #"diagnoses_icd.csv.gz",
     #"d_icd_diagnoses.csv.gz",
     #"prescriptions.csv.gz",
     #"procedures_icd.csv.gz",
+    #"d_icd_procedures.csv.gz",
     #"labevents.csv.gz",
     #"d_labitems.csv.gz",
-    #"d_icd_procedures.csv.gz",
-    #"d_labitems.csv.gz",
-    #"hcpcsevents.csv.gz",
-    #"omr.csv.gz",
-    #"poe.csv.gz",
-    #"poe_detail.csv.gz",
     #"transfers.csv.gz",
 ]
 
@@ -174,7 +170,7 @@ def top_labs_preview(limit: int = 50, open_html: bool = True):
 
         FROM '{labevents_path}'
 
-        WHERE itemid IS NOT NULL AND valuenum != "NaN"
+        WHERE itemid IS NOT NULL AND valuenum IS NOT NULL
 
         GROUP BY itemid
 

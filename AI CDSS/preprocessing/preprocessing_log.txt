@@ -1,0 +1,47 @@
+[2026-03-16 19:56:04] Starting CDSS Base Table Pipeline (DuckDB-optimized)
+[2026-03-16 19:56:04] Initializing DuckDB...
+[2026-03-16 19:56:05] Loading raw tables into DuckDB...
+[2026-03-16 19:56:05]   raw_patients: 364627 records
+[2026-03-16 19:56:05]   raw_admissions: 546028 records
+[2026-03-16 19:56:06]   raw_omr: 7753027 records
+[2026-03-16 19:56:06] Building adult cohort (anchor_age >= 18)...
+[2026-03-16 19:56:06]   Cohort size: 545848 admissions
+[2026-03-16 19:56:06] Processing OMR with window functions...
+[2026-03-16 19:56:06]   OMR records within admission windows: 576375
+[2026-03-16 19:56:06]   Admissions with OMR data: 181425/545848 (33.2%)
+[2026-03-16 19:56:07]   OMR latest records (after deduplication): 456447
+[2026-03-16 19:56:07]   OMR pivot complete
+[2026-03-16 19:56:07] Parsing blood pressure...
+[2026-03-16 19:56:07]   Blood pressure split complete
+[2026-03-16 19:56:07] Merging cohort with OMR features...
+[2026-03-16 19:56:07]   Final cdss_base: 545848 records
+[2026-03-16 19:56:07] Running validation checks...
+[2026-03-16 19:56:07] Total rows in cdss_base: 545848
+[2026-03-16 19:56:07] Unique patients: 223380
+[2026-03-16 19:56:07] Unique admissions: 545848
+[2026-03-16 19:56:07] Mortality distribution:
+[2026-03-16 19:56:07]   0: 534148 (97.9%)
+[2026-03-16 19:56:07]   1: 11700 (2.1%)
+[2026-03-16 19:56:07] LOS statistics (days):
+[2026-03-16 19:56:07]   Min: 0.00
+[2026-03-16 19:56:07]   Max: 515.56
+[2026-03-16 19:56:07]   Mean: 4.76
+[2026-03-16 19:56:07]   Median: 2.82
+[2026-03-16 19:56:07]   Q1: 1.13
+[2026-03-16 19:56:07]   Q3: 5.62
+[2026-03-16 19:56:07] Missing value counts:
+[2026-03-16 19:56:07]   height_inches: 456763 (83.7%)
+[2026-03-16 19:56:07]   weight_lbs: 377318 (69.1%)
+[2026-03-16 19:56:07]   bmi: 379067 (69.4%)
+[2026-03-16 19:56:07]   systolic_bp: 513798 (94.1%)
+[2026-03-16 19:56:07]   diastolic_bp: 513798 (94.1%)
+[2026-03-16 19:56:07] 
+Sample of cdss_base (first 5 rows):
+[2026-03-16 19:56:07] Columns: ['subject_id', 'hadm_id', 'age', 'gender', 'race', 'marital_status', 'admission_type', 'admission_location', 'discharge_location', 'insurance', 'language', 'los_days', 'mortality', 'height_inches', 'weight_lbs', 'bmi', 'systolic_bp', 'diastolic_bp']
+[2026-03-16 19:56:07]   Row 1: {'subject_id': 10467237, 'hadm_id': 20000019, 'age': 76, 'gender': 'F', 'race': 'HISPANIC/LATINO - GUATEMALAN', 'marital_status': 'SINGLE', 'admission_type': 'EW EMER.', 'admission_location': 'EMERGENCY ROOM', 'discharge_location': 'HOME', 'insurance': 'Medicaid', 'language': 'Spanish', 'los_days': 2.823611111111111, 'mortality': 0, 'height_inches': None, 'weight_lbs': None, 'bmi': None, 'systolic_bp': None, 'diastolic_bp': None}
+[2026-03-16 19:56:07]   Row 2: {'subject_id': 16925328, 'hadm_id': 20000024, 'age': 84, 'gender': 'F', 'race': 'WHITE', 'marital_status': 'SINGLE', 'admission_type': 'EW EMER.', 'admission_location': 'EMERGENCY ROOM', 'discharge_location': 'HOME HEALTH CARE', 'insurance': 'Medicare', 'language': 'English', 'los_days': 0.8694444444444445, 'mortality': 0, 'height_inches': 56.0, 'weight_lbs': 124.12, 'bmi': 27.8, 'systolic_bp': None, 'diastolic_bp': None}
+[2026-03-16 19:56:07]   Row 3: {'subject_id': 19430048, 'hadm_id': 20000034, 'age': 72, 'gender': 'M', 'race': 'BLACK/CARIBBEAN ISLAND', 'marital_status': 'SINGLE', 'admission_type': 'DIRECT OBSERVATION', 'admission_location': 'PHYSICIAN REFERRAL', 'discharge_location': None, 'insurance': 'Medicare', 'language': 'English', 'los_days': 1.926388888888889, 'mortality': 0, 'height_inches': None, 'weight_lbs': 121.0, 'bmi': 16.9, 'systolic_bp': None, 'diastolic_bp': None}
+[2026-03-16 19:56:07]   Row 4: {'subject_id': 18910522, 'hadm_id': 20000041, 'age': 62, 'gender': 'F', 'race': 'WHITE', 'marital_status': 'SINGLE', 'admission_type': 'SURGICAL SAME DAY ADMISSION', 'admission_location': 'PHYSICIAN REFERRAL', 'discharge_location': 'SKILLED NURSING FACILITY', 'insurance': 'Private', 'language': 'English', 'los_days': 3.2743055555555554, 'mortality': 0, 'height_inches': None, 'weight_lbs': None, 'bmi': None, 'systolic_bp': None, 'diastolic_bp': None}
+[2026-03-16 19:56:07]   Row 5: {'subject_id': 13413708, 'hadm_id': 20000045, 'age': 51, 'gender': 'F', 'race': 'WHITE', 'marital_status': 'DIVORCED', 'admission_type': 'OBSERVATION ADMIT', 'admission_location': 'WALK-IN/SELF REFERRAL', 'discharge_location': 'HOME HEALTH CARE', 'insurance': 'Private', 'language': 'English', 'los_days': 7.402777777777778, 'mortality': 0, 'height_inches': None, 'weight_lbs': None, 'bmi': None, 'systolic_bp': None, 'diastolic_bp': None}
+[2026-03-16 19:56:07] 
+Database schema:
