@@ -45,3 +45,14 @@ Sample of cdss_base (first 5 rows):
 [2026-03-16 19:56:07]   Row 5: {'subject_id': 13413708, 'hadm_id': 20000045, 'age': 51, 'gender': 'F', 'race': 'WHITE', 'marital_status': 'DIVORCED', 'admission_type': 'OBSERVATION ADMIT', 'admission_location': 'WALK-IN/SELF REFERRAL', 'discharge_location': 'HOME HEALTH CARE', 'insurance': 'Private', 'language': 'English', 'los_days': 7.402777777777778, 'mortality': 0, 'height_inches': None, 'weight_lbs': None, 'bmi': None, 'systolic_bp': None, 'diastolic_bp': None}
 [2026-03-16 19:56:07] 
 Database schema:
+
+
+01_cdss_diagnoses Table
+🚀 Starting cdss_diagnoses preprocessing...
+🛠️  Building cdss_diagnoses table...
+📊 Running Post-Build Validation...
+✅ Success! Table 'cdss_diagnoses' created.
+   - Total Admissions: 545,317
+   - Avg Diagnoses per Admission: 11.67
+   - Missing Primary DX: 0
+⏱️  Pipeline finished in 107.93 seconds.
