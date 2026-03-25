@@ -590,6 +590,3 @@ This gives more weight to:
 
 ---
 
-## Interview Answer (5-6 lines)
-
-This CDSS uses a non-parametric, case-based retrieval approach rather than a traditional predictive model. The original version used cosine kNN over engineered admission features, while the optimized production path uses DuckDB for candidate retrieval and Python for weighted reranking. Similarity is driven by diagnosis overlap, treatment overlap, and demographic/vital-sign context, with Jaccard used for set features and Gaussian-style closeness for numeric context. Treatment recommendations are aggregated from a larger similar-patient pool using frequency and similarity-weighted LOS-adjusted scores. The design avoids deep learning and embeddings because the data is structured, sparse, and requires strong interpretability.
