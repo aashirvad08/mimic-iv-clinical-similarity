@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
@@ -98,6 +99,76 @@ class BenchmarkArtifacts:
     fitted_models: dict[str, Any]
     predicted_labels: dict[str, np.ndarray]
     predicted_scores: dict[str, np.ndarray]
+
+
+class AccuracyTunedLogisticRegression(BaseEstimator, ClassifierMixin):
+    def __init__(
+        self,
+        validation_fraction: float = 0.2,
+        random_state: int = DEFAULT_RANDOM_STATE,
+        max_iter: int = 1000,
+        solver: str = "liblinear",
+    ) -> None:
+        self.validation_fraction = validation_fraction
+        self.random_state = random_state
+        self.max_iter = max_iter
+        self.solver = solver
+        self.threshold_ = 0.5
+        self.model_: LogisticRegression | None = None
+        self.classes_ = np.array([0, 1], dtype=int)
+
+    def fit(self, X: Any, y: Any) -> "AccuracyTunedLogisticRegression":
+        y_array = np.asarray(y, dtype=int)
+        base_model = LogisticRegression(max_iter=self.max_iter, solver=self.solver)
+
+        enough_for_validation = len(y_array) >= 20 and len(np.unique(y_array)) > 1 and y_array.sum() >= 2
+        if enough_for_validation:
+            x_fit, x_val, y_fit, y_val = train_test_split(
+                X,
+                y_array,
+                test_size=self.validation_fraction,
+                random_state=self.random_state,
+                stratify=y_array,
+            )
+            tuning_model = LogisticRegression(max_iter=self.max_iter, solver=self.solver)
+            tuning_model.fit(x_fit, y_fit)
+            val_scores = tuning_model.predict_proba(x_val)[:, 1]
+            candidate_thresholds = np.unique(np.concatenate([np.array([0.5]), val_scores]))
+
+            best_threshold = 0.5
+            best_accuracy = -1.0
+            best_f1 = -1.0
+            for threshold in candidate_thresholds:
+                predictions = (val_scores >= threshold).astype(int)
+                accuracy = accuracy_score(y_val, predictions)
+                f1 = f1_score(y_val, predictions, zero_division=0)
+                if accuracy > best_accuracy or (accuracy == best_accuracy and f1 > best_f1):
+                    best_accuracy = float(accuracy)
+                    best_f1 = float(f1)
+                    best_threshold = float(threshold)
+            self.threshold_ = best_threshold
+        else:
+            self.threshold_ = 0.5
+
+        base_model.fit(X, y_array)
+        self.model_ = base_model
+        self.classes_ = np.asarray(base_model.classes_)
+        return self
+
+    @property
+    def coef_(self) -> np.ndarray:
+        if self.model_ is None:
+            raise AttributeError("Model is not fitted yet.")
+        return self.model_.coef_
+
+    def predict_proba(self, X: Any) -> np.ndarray:
+        if self.model_ is None:
+            raise ValueError("Model must be fitted before calling predict_proba.")
+        return self.model_.predict_proba(X)
+
+    def predict(self, X: Any) -> np.ndarray:
+        probabilities = self.predict_proba(X)[:, 1]
+        return (probabilities >= self.threshold_).astype(int)
 
 
 def _is_binary_series(series: pd.Series) -> bool:
@@ -266,19 +337,43 @@ class TopKJaccardVotingClassifier:
         self,
         top_k: int = DEFAULT_CUSTOM_TOP_K,
         diagnosis_weight: float = 0.60,
+        diagnosis_group_weight: float = 0.00,
         treatment_weight: float = 0.40,
+        primary_weight: float = 0.00,
+        context_weight: float = 0.00,
         candidate_limit: int | None = DEFAULT_CUSTOM_CANDIDATE_LIMIT,
+        similarity_power: float = 2.0,
+        validation_fraction: float = 0.2,
+        random_state: int = DEFAULT_RANDOM_STATE,
+        tune_threshold: bool = False,
     ) -> None:
         if top_k < 1:
             raise ValueError("top_k must be >= 1")
         self.top_k = int(top_k)
         self.diagnosis_weight = float(diagnosis_weight)
+        self.diagnosis_group_weight = float(diagnosis_group_weight)
         self.treatment_weight = float(treatment_weight)
+        self.primary_weight = float(primary_weight)
+        self.context_weight = float(context_weight)
         self.candidate_limit = candidate_limit
+        self.similarity_power = float(similarity_power)
+        self.validation_fraction = float(validation_fraction)
+        self.random_state = int(random_state)
+        self.tune_threshold = bool(tune_threshold)
         self._token_index: dict[str, list[int]] = {}
         self._train_df: pd.DataFrame | None = None
         self._y_train: np.ndarray | None = None
         self._base_rate: float = 0.0
+        self.threshold_: float = 0.5
+        self._train_dx_sets: np.ndarray | None = None
+        self._train_dx_3_sets: np.ndarray | None = None
+        self._train_treatment_sets: np.ndarray | None = None
+        self._train_primary: np.ndarray | None = None
+        self._train_age: np.ndarray | None = None
+        self._train_diagnosis_count: np.ndarray | None = None
+        self._train_treatment_complexity: np.ndarray | None = None
+        self._train_gender: np.ndarray | None = None
+        self._train_race: np.ndarray | None = None
 
     @staticmethod
     def _jaccard_similarity(set_a: set[str], set_b: set[str]) -> float:
@@ -287,18 +382,161 @@ class TopKJaccardVotingClassifier:
             return 0.0
         return len(set_a & set_b) / union_size
 
+    @staticmethod
+    def _safe_string(value: Any) -> str | None:
+        if value is None or pd.isna(value):
+            return None
+        return str(value)
+
+    @staticmethod
+    def _numeric_similarity(value_a: Any, value_b: Any, scale: float) -> float:
+        if value_a is None or value_b is None or pd.isna(value_a) or pd.isna(value_b):
+            return 0.5
+        difference = float(value_a) - float(value_b)
+        return float(np.exp(-((difference / scale) ** 2)))
+
+    def _context_similarity(self, row_a: pd.Series, row_b: pd.Series) -> float:
+        return self._context_similarity_values(
+            row_a.get("age"),
+            row_b.get("age"),
+            row_a.get("diagnosis_count"),
+            row_b.get("diagnosis_count"),
+            row_a.get("treatment_complexity_score"),
+            row_b.get("treatment_complexity_score"),
+            row_a.get("gender"),
+            row_b.get("gender"),
+            row_a.get("race"),
+            row_b.get("race"),
+        )
+
+    def _context_similarity_values(
+        self,
+        age_a: Any,
+        age_b: Any,
+        diagnosis_count_a: Any,
+        diagnosis_count_b: Any,
+        treatment_complexity_a: Any,
+        treatment_complexity_b: Any,
+        gender_a: Any,
+        gender_b: Any,
+        race_a: Any,
+        race_b: Any,
+    ) -> float:
+        age_sim = self._numeric_similarity(age_a, age_b, scale=15.0)
+        diagnosis_burden_sim = self._numeric_similarity(
+            diagnosis_count_a,
+            diagnosis_count_b,
+            scale=6.0,
+        )
+        treatment_complexity_sim = self._numeric_similarity(
+            treatment_complexity_a,
+            treatment_complexity_b,
+            scale=0.25,
+        )
+        gender_match = float(
+            self._safe_string(gender_a) is not None
+            and self._safe_string(gender_a) == self._safe_string(gender_b)
+        )
+        race_match = float(
+            self._safe_string(race_a) is not None
+            and self._safe_string(race_a) == self._safe_string(race_b)
+        )
+        return (
+            0.30 * age_sim
+            + 0.20 * diagnosis_burden_sim
+            + 0.20 * treatment_complexity_sim
+            + 0.15 * gender_match
+            + 0.15 * race_match
+        )
+
+    def _row_similarity(self, row_a: pd.Series, row_b: pd.Series) -> float:
+        diagnosis_sim = self._jaccard_similarity(row_a["dx_set"], row_b["dx_set"])
+        diagnosis_group_sim = self._jaccard_similarity(row_a["dx_3_set"], row_b["dx_3_set"])
+        treatment_sim = self._jaccard_similarity(row_a["treatment_token_set"], row_b["treatment_token_set"])
+        primary_match = float(
+            self._safe_string(row_a.get("primary_diagnosis_icd")) is not None
+            and self._safe_string(row_a.get("primary_diagnosis_icd")) == self._safe_string(row_b.get("primary_diagnosis_icd"))
+        )
+        context_sim = self._context_similarity(row_a, row_b)
+        return (
+            self.diagnosis_weight * diagnosis_sim
+            + self.diagnosis_group_weight * diagnosis_group_sim
+            + self.treatment_weight * treatment_sim
+            + self.primary_weight * primary_match
+            + self.context_weight * context_sim
+        )
+
+    def _tune_threshold(self, train_df: pd.DataFrame, y_train: np.ndarray) -> float:
+        if not self.tune_threshold:
+            return 0.5
+        enough_for_validation = len(y_train) >= 20 and len(np.unique(y_train)) > 1 and y_train.sum() >= 2
+        if not enough_for_validation:
+            return 0.5
+
+        fit_df, val_df, fit_y, val_y = train_test_split(
+            train_df,
+            y_train,
+            test_size=self.validation_fraction,
+            random_state=self.random_state,
+            stratify=y_train,
+        )
+        tuning_model = TopKJaccardVotingClassifier(
+            top_k=self.top_k,
+            diagnosis_weight=self.diagnosis_weight,
+            diagnosis_group_weight=self.diagnosis_group_weight,
+            treatment_weight=self.treatment_weight,
+            primary_weight=self.primary_weight,
+            context_weight=self.context_weight,
+            candidate_limit=self.candidate_limit,
+            similarity_power=self.similarity_power,
+            validation_fraction=self.validation_fraction,
+            random_state=self.random_state,
+            tune_threshold=False,
+        )
+        tuning_model.fit(fit_df, fit_y)
+        validation_scores = tuning_model.predict_proba(val_df)[:, 1]
+        candidate_thresholds = np.unique(np.concatenate([np.array([0.5]), validation_scores]))
+
+        best_threshold = 0.5
+        best_accuracy = -1.0
+        best_f1 = -1.0
+        for threshold in candidate_thresholds:
+            predictions = (validation_scores >= threshold).astype(int)
+            accuracy = accuracy_score(val_y, predictions)
+            f1 = f1_score(val_y, predictions, zero_division=0)
+            if accuracy > best_accuracy or (accuracy == best_accuracy and f1 > best_f1):
+                best_accuracy = float(accuracy)
+                best_f1 = float(f1)
+                best_threshold = float(threshold)
+        return best_threshold
+
     def fit(self, train_df: pd.DataFrame, y_train: Iterable[int]) -> "TopKJaccardVotingClassifier":
         self._train_df = train_df.copy()
         self._y_train = np.asarray(list(y_train), dtype=int)
         self._base_rate = float(self._y_train.mean()) if len(self._y_train) else 0.0
+        self._train_dx_sets = self._train_df["dx_set"].to_numpy(dtype=object)
+        self._train_dx_3_sets = self._train_df["dx_3_set"].to_numpy(dtype=object)
+        self._train_treatment_sets = self._train_df["treatment_token_set"].to_numpy(dtype=object)
+        self._train_primary = self._train_df["primary_diagnosis_icd"].to_numpy(dtype=object)
+        self._train_age = self._train_df["age"].to_numpy(dtype=object)
+        self._train_diagnosis_count = self._train_df["diagnosis_count"].to_numpy(dtype=object)
+        self._train_treatment_complexity = self._train_df["treatment_complexity_score"].to_numpy(dtype=object)
+        self._train_gender = self._train_df["gender"].to_numpy(dtype=object)
+        self._train_race = self._train_df["race"].to_numpy(dtype=object)
 
         token_index: dict[str, list[int]] = defaultdict(list)
         for row_idx, (_, row) in enumerate(self._train_df.iterrows()):
             for token in row["dx_set"]:
                 token_index[f"dx:{token}"].append(row_idx)
+            for token in row["dx_3_set"]:
+                token_index[f"dx3:{token}"].append(row_idx)
             for token in row["treatment_token_set"]:
                 token_index[token].append(row_idx)
+            primary_diagnosis = self._safe_string(row.get("primary_diagnosis_icd"))
+            if primary_diagnosis is not None:
+                token_index[f"primary:{primary_diagnosis}"].append(row_idx)
         self._token_index = dict(token_index)
+        self.threshold_ = self._tune_threshold(self._train_df, self._y_train)
         return self
 
     def _select_candidate_positions(self, row: pd.Series) -> np.ndarray:
@@ -306,8 +544,13 @@ class TopKJaccardVotingClassifier:
         token_counts: Counter[int] = Counter()
         for token in row["dx_set"]:
             token_counts.update(self._token_index.get(f"dx:{token}", []))
+        for token in row["dx_3_set"]:
+            token_counts.update(self._token_index.get(f"dx3:{token}", []))
         for token in row["treatment_token_set"]:
             token_counts.update(self._token_index.get(token, []))
+        primary_diagnosis = self._safe_string(row.get("primary_diagnosis_icd"))
+        if primary_diagnosis is not None:
+            token_counts.update(self._token_index.get(f"primary:{primary_diagnosis}", []))
 
         if not token_counts:
             return np.arange(len(self._train_df), dtype=int)
@@ -324,21 +567,64 @@ class TopKJaccardVotingClassifier:
     def predict_proba(self, test_df: pd.DataFrame) -> np.ndarray:
         if self._train_df is None or self._y_train is None:
             raise ValueError("Model must be fitted before calling predict_proba.")
+        if (
+            self._train_dx_sets is None
+            or self._train_dx_3_sets is None
+            or self._train_treatment_sets is None
+            or self._train_primary is None
+            or self._train_age is None
+            or self._train_diagnosis_count is None
+            or self._train_treatment_complexity is None
+            or self._train_gender is None
+            or self._train_race is None
+        ):
+            raise ValueError("Cached training arrays are missing. Fit the model again.")
 
         scores = np.empty((len(test_df), 2), dtype=float)
-        train_dx_sets = self._train_df["dx_set"].to_numpy(dtype=object)
-        train_treatment_sets = self._train_df["treatment_token_set"].to_numpy(dtype=object)
+        train_dx_sets = self._train_dx_sets
+        train_dx_3_sets = self._train_dx_3_sets
+        train_treatment_sets = self._train_treatment_sets
+        train_primary = self._train_primary
+        train_age = self._train_age
+        train_diagnosis_count = self._train_diagnosis_count
+        train_treatment_complexity = self._train_treatment_complexity
+        train_gender = self._train_gender
+        train_race = self._train_race
 
         for idx, (_, row) in enumerate(test_df.iterrows()):
             candidate_positions = self._select_candidate_positions(row)
             if len(candidate_positions) == 0:
                 positive_probability = self._base_rate
             else:
+                query_primary = self._safe_string(row.get("primary_diagnosis_icd"))
+                query_age = row.get("age")
+                query_diagnosis_count = row.get("diagnosis_count")
+                query_treatment_complexity = row.get("treatment_complexity_score")
+                query_gender = row.get("gender")
+                query_race = row.get("race")
                 similarities = np.fromiter(
                     (
                         self.diagnosis_weight * self._jaccard_similarity(row["dx_set"], train_dx_sets[position])
+                        + self.diagnosis_group_weight * self._jaccard_similarity(row["dx_3_set"], train_dx_3_sets[position])
                         + self.treatment_weight
                         * self._jaccard_similarity(row["treatment_token_set"], train_treatment_sets[position])
+                        + self.primary_weight
+                        * float(
+                            query_primary is not None and query_primary == self._safe_string(train_primary[position])
+                        )
+                        + self.context_weight
+                        * self._context_similarity_values(
+                            query_age,
+                            train_age[position],
+                            query_diagnosis_count,
+                            train_diagnosis_count[position],
+                            query_treatment_complexity,
+                            train_treatment_complexity[position],
+                            query_gender,
+                            train_gender[position],
+                            query_race,
+                            train_race[position],
+                        )
                         for position in candidate_positions
                     ),
                     dtype=float,
@@ -352,7 +638,17 @@ class TopKJaccardVotingClassifier:
                     top_positions = top_positions[np.argsort(similarities[top_positions])[::-1]]
 
                 neighbor_labels = self._y_train[candidate_positions[top_positions]]
-                positive_probability = float(neighbor_labels.mean()) if len(neighbor_labels) else self._base_rate
+                neighbor_similarities = similarities[top_positions]
+                if len(neighbor_labels) and float(np.sum(neighbor_similarities)) > 0.0:
+                    weights = np.power(np.clip(neighbor_similarities, a_min=0.0, a_max=None), self.similarity_power)
+                    weight_sum = float(np.sum(weights))
+                    positive_probability = (
+                        float(np.dot(weights, neighbor_labels) / weight_sum)
+                        if weight_sum > 0.0
+                        else float(neighbor_labels.mean())
+                    )
+                else:
+                    positive_probability = float(neighbor_labels.mean()) if len(neighbor_labels) else self._base_rate
 
             scores[idx, 1] = positive_probability
             scores[idx, 0] = 1.0 - positive_probability
@@ -361,7 +657,7 @@ class TopKJaccardVotingClassifier:
 
     def predict(self, test_df: pd.DataFrame) -> np.ndarray:
         probabilities = self.predict_proba(test_df)[:, 1]
-        return (probabilities >= 0.5).astype(int)
+        return (probabilities >= self.threshold_).astype(int)
 
 
 def _build_model_registry(
@@ -381,6 +677,13 @@ def _build_model_registry(
     model_registry: dict[str, Any] = {
         "Logistic Regression": make_pipeline(
             LogisticRegression(max_iter=1000, solver="liblinear")
+        ),
+        "Accuracy-Tuned Logistic Regression": make_pipeline(
+            AccuracyTunedLogisticRegression(
+                random_state=random_state,
+                max_iter=1000,
+                solver="liblinear",
+            )
         ),
         "Random Forest": make_pipeline(
             RandomForestClassifier(
@@ -424,7 +727,12 @@ def generate_benchmark_analysis(comparison_df: pd.DataFrame, target_column: str)
 
     best_row = available.iloc[0]
     model_name = best_row["model"]
-    if model_name == "Logistic Regression":
+    if model_name == "Accuracy-Tuned Logistic Regression":
+        reason = (
+            "it kept the strong linear signal from the tabular features and tuned the decision threshold "
+            "specifically for holdout-set accuracy, which helped on this imbalanced outcome."
+        )
+    elif model_name == "Logistic Regression":
         reason = "it captured the linear risk pattern cleanly and benefited from calibrated probabilities on the engineered tabular features."
     elif model_name == "Random Forest":
         reason = "it handled nonlinear interactions across diagnosis burden, vitals, and treatment complexity better than the linear and neighbor baselines."
